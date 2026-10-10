@@ -15,7 +15,7 @@
     <artifactId>my-shop-backend</artifactId>
     <version>0.0.1</version>
     <name>my-shop-backend</name>
-    <description>My Shop 个人电商项目后端：新品、二手、以物换物</description>
+    <description>My Shop 个人电商项目后端：换物、二手</description>
 
     <properties>
         <java.version>17</java.version>

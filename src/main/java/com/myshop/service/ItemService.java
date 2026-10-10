@@ -1,174 +1,158 @@
 package com.myshop.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myshop.entity.Item;
+import com.myshop.mapper.ItemMapper;
 import com.myshop.model.ItemVO;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * 物品业务逻辑。当前返回内存假数据，后续接入 MyBatis-Plus + MySQL。
+ * 物品业务逻辑：数据来自 MySQL 的 {@code items} 表，对外返回 {@link ItemVO} 不变。
  *
- * <p>假数据覆盖三种交易方式：{@code BARTER}（只换）、{@code SALE}（只卖）、{@code BOTH}（可卖可换）。
+ * <p>{@code images} 与 {@code want_categories} 在库中以 JSON 字符串存储，
+ * 这里负责与 {@code List<String>} 互转。
  */
 @Service
+@RequiredArgsConstructor
 public class ItemService {
 
     private static final DateTimeFormatter TIME_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.CHINA);
 
-    private static final List<ItemVO> MOCK_ITEMS = buildMockItems();
+    private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {
+    };
+
+    private final ItemMapper itemMapper;
+
+    private final ObjectMapper objectMapper;
 
     /**
      * 查询物品列表，可按交易方式过滤。
      *
      * @param mode 交易方式：BARTER / SALE / BOTH；为空（null、空串、空白）时返回全部
-     * @return 物品列表
+     * @return 物品列表，按 id 升序
      */
     public List<ItemVO> listAll(String mode) {
-        if (mode == null || mode.isBlank()) {
-            return new ArrayList<>(MOCK_ITEMS);
+        LambdaQueryWrapper<Item> wrapper = new LambdaQueryWrapper<>();
+        if (StringUtils.hasText(mode)) {
+            wrapper.eq(Item::getMode, mode.trim().toUpperCase(Locale.ROOT));
         }
-        String expected = mode.trim().toUpperCase(Locale.ROOT);
-        List<ItemVO> result = new ArrayList<>();
-        for (ItemVO item : MOCK_ITEMS) {
-            if (expected.equals(item.getMode())) {
-                result.add(item);
-            }
-        }
-        return result;
+        wrapper.orderByAsc(Item::getId);
+        return itemMapper.selectList(wrapper).stream().map(this::toVO).toList();
     }
 
     /**
      * 根据 ID 查询物品详情。
      *
      * @param id 物品 ID
-     * @return 物品对象；不存在或 id 为空时返回 null
+     * @return 物品对象；库中不存在或 id 为空时返回 null
      */
     public ItemVO getById(Long id) {
         if (id == null) {
             return null;
         }
-        for (ItemVO item : MOCK_ITEMS) {
-            if (id.equals(item.getId())) {
-                return item;
-            }
-        }
-        return null;
+        Item item = itemMapper.selectById(id);
+        return item == null ? null : toVO(item);
     }
 
     /**
-     * 构建 6 条内存假数据：2 条换物、2 条二手、2 条可卖可换。
+     * 实体转视图对象：JSON 字符串字段还原成列表，时间格式化成字符串。
      */
-    private static List<ItemVO> buildMockItems() {
-        String now = LocalDateTime.now().format(TIME_FORMATTER);
+    private ItemVO toVO(Item item) {
+        ItemVO vo = new ItemVO();
+        vo.setId(item.getId());
+        vo.setTitle(item.getTitle());
+        // images 语义上永远是列表：库中为 NULL 时按空列表返回，避免前端遍历报错
+        List<String> images = parseJsonList(item.getImages());
+        vo.setImages(images == null ? List.of() : images);
+        vo.setDescription(item.getDescription());
+        vo.setCategory(item.getCategory());
+        vo.setCondition(item.getCondition());
+        vo.setOwnerId(item.getOwnerId());
+        vo.setMode(item.getMode());
+        vo.setPrice(item.getPrice());
+        // wantCategories 仅在换物相关模式下有意义，为空时保持 null 以区分「不适用」
+        vo.setWantCategories(parseJsonList(item.getWantCategories()));
+        vo.setWantDescription(item.getWantDescription());
+        vo.setAllowPriceDiff(item.getAllowPriceDiff());
+        vo.setStatus(item.getStatus());
+        vo.setCreatedAt(formatTime(item.getCreatedAt()));
+        return vo;
+    }
 
-        // 1. BARTER：相机换平板
-        ItemVO camera = new ItemVO(
-                1L,
-                "佳能 EOS R6 换平板",
-                List.of(),
-                "自用佳能 EOS R6 机身，快门数不到 1 万，成色良好，功能一切正常。想换一台平板电脑，iPad 或安卓旗舰平板都可以聊。",
-                "CAMERA",
-                "GOOD",
-                1L,
-                "BARTER",
-                null,
-                List.of("PHONE", "COMPUTER"),
-                "想换 iPad 或 MacBook",
-                true,
-                "AVAILABLE",
-                now);
+    /**
+     * 视图对象转实体：列表序列化成 JSON 字符串，时间字符串解析成 {@link LocalDateTime}。
+     * 供后续「发布物品」等写入场景使用，与 {@link #toVO(Item)} 互为逆操作。
+     */
+    private Item toEntity(ItemVO vo) {
+        if (vo == null) {
+            return null;
+        }
+        Item item = new Item();
+        item.setId(vo.getId());
+        item.setTitle(vo.getTitle());
+        item.setImages(writeJsonList(vo.getImages() == null ? List.of() : vo.getImages()));
+        item.setDescription(vo.getDescription());
+        item.setCategory(vo.getCategory());
+        item.setCondition(vo.getCondition());
+        item.setOwnerId(vo.getOwnerId());
+        item.setMode(vo.getMode());
+        item.setPrice(vo.getPrice());
+        item.setWantCategories(writeJsonList(vo.getWantCategories()));
+        item.setWantDescription(vo.getWantDescription());
+        item.setAllowPriceDiff(vo.getAllowPriceDiff());
+        item.setStatus(vo.getStatus());
+        item.setCreatedAt(parseTime(vo.getCreatedAt()));
+        return item;
+    }
 
-        // 2. BARTER：书换耳机
-        ItemVO books = new ItemVO(
-                2L,
-                "三体全集 换 无线耳机",
-                List.of(),
-                "《三体》全集三册，重庆出版社版本，只翻阅过一次，书页干净无笔记。想换一副蓝牙耳机，差价可以商量。",
-                "BOOK",
-                "LIKE_NEW",
-                2L,
-                "BARTER",
-                null,
-                List.of("OTHER"),
-                "想换蓝牙耳机，可补差价",
-                true,
-                "AVAILABLE",
-                now);
+    /**
+     * JSON 字符串转列表。
+     *
+     * @return 入参为空时返回 null；内容损坏时抛出异常以便尽早发现脏数据
+     */
+    private List<String> parseJsonList(String json) {
+        if (!StringUtils.hasText(json)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, STRING_LIST_TYPE);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("物品列表字段 JSON 解析失败: " + json, ex);
+        }
+    }
 
-        // 3. SALE：二手 iPhone
-        ItemVO iphone = new ItemVO(
-                3L,
-                "iPhone 13 128G 九成新",
-                List.of(),
-                "iPhone 13 128G 国行版本，电池健康度 89%，屏幕无划痕，一直带壳贴膜使用，配件有原装数据线。",
-                "PHONE",
-                "GOOD",
-                1L,
-                "SALE",
-                new BigDecimal("3000.00"),
-                null,
-                null,
-                null,
-                "AVAILABLE",
-                now);
+    /**
+     * 列表转 JSON 字符串。
+     *
+     * @return 入参为 null 时返回 null
+     */
+    private String writeJsonList(List<String> values) {
+        if (values == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(values);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("物品列表字段 JSON 序列化失败: " + values, ex);
+        }
+    }
 
-        // 4. SALE：二手吉他
-        ItemVO guitar = new ItemVO(
-                4L,
-                "雅马哈民谣吉他",
-                List.of(),
-                "雅马哈 F310 民谣吉他，41 寸，入手两年，琴颈平直手感好，面板有正常使用痕迹，附赠琴包和拨片。",
-                "INSTRUMENT",
-                "FAIR",
-                2L,
-                "SALE",
-                new BigDecimal("800.00"),
-                null,
-                null,
-                null,
-                "AVAILABLE",
-                now);
+    private String formatTime(LocalDateTime time) {
+        return time == null ? null : time.format(TIME_FORMATTER);
+    }
 
-        // 5. BOTH：游戏机
-        ItemVO gameConsole = new ItemVO(
-                5L,
-                "Switch OLED 可卖可换",
-                List.of(),
-                "Switch OLED 白色港版，屏幕完好无坏点，Joy-Con 无漂移，带底座和原装充电器。可以直接买，也可以换手机或电脑。",
-                "GAME",
-                "LIKE_NEW",
-                1L,
-                "BOTH",
-                new BigDecimal("1500.00"),
-                List.of("PHONE", "COMPUTER"),
-                "也可以换手机或笔记本电脑",
-                true,
-                "AVAILABLE",
-                now);
-
-        // 6. BOTH：键盘
-        ItemVO keyboard = new ItemVO(
-                6L,
-                "机械键盘 87 键 可卖可换",
-                List.of(),
-                "87 键机械键盘，红轴，全新未拆封，带原装键帽和说明书。可低价出，也想换书或游戏卡带，不支持补差价。",
-                "COMPUTER",
-                "NEW",
-                2L,
-                "BOTH",
-                new BigDecimal("300.00"),
-                List.of("BOOK", "GAME"),
-                "想换书或游戏卡带，不补差价",
-                false,
-                "AVAILABLE",
-                now);
-
-        return List.of(camera, books, iphone, guitar, gameConsole, keyboard);
+    private LocalDateTime parseTime(String text) {
+        return StringUtils.hasText(text) ? LocalDateTime.parse(text.trim(), TIME_FORMATTER) : null;
     }
 }

@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 二手订单接口（当前为假数据）。
+ * 二手订单接口，数据来自 MySQL 的 orders 表。
  */
 @RestController
 @RequestMapping("/api/orders")

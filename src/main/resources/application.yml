@@ -5,6 +5,29 @@ spring:
   application:
     name: my-shop-backend
 
+  datasource:
+    url: "jdbc:mysql://localhost:3306/my_shop?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
+    username: shop
+    password: shop123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # 每次启动自动执行建表与初始化数据脚本（脚本本身幂等，可重复执行）
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:data.sql
+      encoding: UTF-8
+      continue-on-error: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+
 logging:
   level:
     com.myshop: info

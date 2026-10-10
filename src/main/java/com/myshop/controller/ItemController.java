@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 物品接口：支持换物（BARTER）、二手（SALE）、可卖可换（BOTH）。
+ * 物品接口：支持换物（BARTER）、二手（SALE）、可卖可换（BOTH），数据来自 MySQL 的 items 表。
  */
 @RestController
 @RequestMapping("/api/items")

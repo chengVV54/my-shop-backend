@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 换物申请接口（当前为假数据）。
+ * 换物申请接口，数据来自 MySQL 的 barter_requests 表。
  */
 @RestController
 @RequestMapping("/api/barters")

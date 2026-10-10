@@ -8,11 +8,107 @@
 - Java 17
 - Maven
 - Lombok
+- MyBatis-Plus 3.5.5
+- MySQL 8.4（mysql-connector-j）
 
 ## 环境要求
 
 - JDK 17+
 - Maven 3.8+
+- MySQL 8.x
+
+## 数据库
+
+- MySQL 8.4
+- 数据库名：`my_shop`
+- 用户：`shop` / `shop123456`
+- 表：`items`、`barter_requests`、`orders`
+- 建表脚本：`src/main/resources/schema.sql`
+- 初始数据：`src/main/resources/data.sql`
+
+连接配置位于 `src/main/resources/application.yml`：
+
+```yaml
+spring:
+  datasource:
+    url: "jdbc:mysql://localhost:3306/my_shop?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
+    username: shop
+    password: shop123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:data.sql
+      encoding: UTF-8
+      continue-on-error: false
+```
+
+### 表结构
+
+**items（物品）**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | BIGINT AUTO_INCREMENT | 主键 |
+| `title` | VARCHAR(200) NOT NULL | 标题 |
+| `images` | TEXT | 图片地址列表，JSON 字符串，如 `["a.jpg"]` |
+| `description` | TEXT | 详细描述 |
+| `category` | VARCHAR(50) NOT NULL | 分类 |
+| `` `condition` `` | VARCHAR(50) NOT NULL | 成色。MySQL 保留字，SQL 中必须用反引号 |
+| `owner_id` | BIGINT NOT NULL | 发布者用户 ID |
+| `mode` | VARCHAR(20) NOT NULL | BARTER / SALE / BOTH |
+| `price` | DECIMAL(10,2) | 售价，仅 SALE / BOTH 有值 |
+| `want_categories` | TEXT | 想换的分类，JSON 字符串 |
+| `want_description` | VARCHAR(500) | 想换什么的补充描述 |
+| `allow_price_diff` | TINYINT(1) | 是否接受补差价 |
+| `status` | VARCHAR(20) NOT NULL | AVAILABLE / LOCKED / DONE / REMOVED |
+| `created_at` | DATETIME | 创建时间 |
+
+**barter_requests（换物申请）**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | BIGINT AUTO_INCREMENT | 主键 |
+| `from_user_id` | BIGINT NOT NULL | 发起方用户 ID |
+| `to_user_id` | BIGINT NOT NULL | 接收方用户 ID |
+| `from_item_id` | BIGINT NOT NULL | 发起方提供的物品 ID |
+| `to_item_id` | BIGINT NOT NULL | 想换取的物品 ID |
+| `message` | VARCHAR(500) | 申请留言 |
+| `price_diff` | DECIMAL(10,2) | 差价，NULL 表示不涉及差价 |
+| `status` | VARCHAR(20) NOT NULL | PENDING / ACCEPTED / REJECTED / DONE / CANCELLED |
+| `created_at` | DATETIME | 创建时间 |
+
+**orders（二手订单）**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | BIGINT AUTO_INCREMENT | 主键 |
+| `buyer_id` | BIGINT NOT NULL | 买家用户 ID |
+| `seller_id` | BIGINT NOT NULL | 卖家用户 ID |
+| `item_id` | BIGINT NOT NULL | 物品 ID |
+| `price` | DECIMAL(10,2) NOT NULL | 成交价 |
+| `address` | VARCHAR(200) | 收货地址 |
+| `status` | VARCHAR(20) NOT NULL | PENDING / PAID / SHIPPED / DONE / CANCELLED |
+| `created_at` | DATETIME | 下单时间 |
+
+### 数据与字段约定
+
+- **脚本自动执行**：应用每次启动都会执行 `schema.sql` 与 `data.sql`（`spring.sql.init.mode=always`）。
+  两个脚本都是幂等的：建表用 `CREATE TABLE IF NOT EXISTS`，插数据用 `INSERT IGNORE` + 固定主键
+  （items 用 1~6，barter_requests / orders 用 1~2），所以重复启动不会重复插入，也不会覆盖你手动改过的行。
+- **JSON 字段**：`items.images` 与 `items.want_categories` 是列表，MySQL 里以 JSON 字符串存储
+  （如 `["PHONE","COMPUTER"]`），由 `ItemService` 用 Jackson 在 `List<String>` 与字符串之间互转。
+  其中 `images` 为空时按空列表返回（前端可直接遍历），`wantCategories` 为空时保持 `null`
+  （表示该模式下「不适用」，例如只卖不换的物品）。
+- **保留字**：`condition` 是 MySQL 保留字，实体上通过 `@TableField("`condition`")` 转义，
+  写原生 SQL 时同样要加反引号。
+
+## 启动前
+
+1. 确保 MySQL 已启动：`sudo systemctl start mysql`
+2. 确保数据库和用户存在（已配置好）
+3. `mvn spring-boot:run` 会自动执行 `schema.sql` 和 `data.sql`
 
 ## 快速开始
 
@@ -40,8 +136,8 @@ curl http://localhost:8080/api/health
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/items` | 物品列表（支持 `?mode=BARTER/SALE/BOTH` 筛选） |
 | GET | `/api/items/{id}` | 物品详情 |
-| GET | `/api/barters` | 换物申请列表（假数据） |
-| GET | `/api/orders` | 二手订单列表（假数据） |
+| GET | `/api/barters` | 换物申请列表（MySQL） |
+| GET | `/api/orders` | 二手订单列表（MySQL） |
 
 调用示例：
 
@@ -115,14 +211,27 @@ src/main/java/com/myshop/
 │   ├── ItemController.java         # 物品接口
 │   ├── BarterController.java       # 换物申请接口
 │   └── OrderController.java        # 二手订单接口
+├── entity/
+│   ├── Item.java                   # 物品表实体（items）
+│   ├── BarterRequest.java          # 换物申请表实体（barter_requests）
+│   └── Order.java                  # 二手订单表实体（orders）
+├── mapper/
+│   ├── ItemMapper.java             # 物品表 Mapper
+│   ├── BarterRequestMapper.java    # 换物申请表 Mapper
+│   └── OrderMapper.java            # 二手订单表 Mapper
 ├── model/
 │   ├── ItemVO.java                 # 物品视图对象
 │   ├── BarterRequestVO.java        # 换物申请视图对象
 │   └── OrderVO.java                # 二手订单视图对象
 └── service/
-    ├── ItemService.java            # 物品业务逻辑（当前为假数据）
-    ├── BarterService.java          # 换物申请业务逻辑（当前为假数据）
-    └── OrderService.java           # 二手订单业务逻辑（当前为假数据）
+    ├── ItemService.java            # 物品业务逻辑（查 MySQL，转 ItemVO）
+    ├── BarterService.java          # 换物申请业务逻辑（查 MySQL，转 BarterRequestVO）
+    └── OrderService.java           # 二手订单业务逻辑（查 MySQL，转 OrderVO）
+
+src/main/resources/
+├── application.yml                 # 数据源、SQL 初始化、MyBatis-Plus 配置
+├── schema.sql                      # 建表脚本（启动时自动执行）
+└── data.sql                        # 初始数据（启动时自动执行）
 ```
 
 ## 配套前端仓库
@@ -136,7 +245,7 @@ src/main/java/com/myshop/
 - [x] 物品接口（假数据）
 - [x] 换物接口（假数据）
 - [x] 订单接口（假数据）
-- [ ] 数据库接入（MySQL + MyBatis-Plus）
+- [x] 数据库接入（MySQL + MyBatis-Plus）
 - [ ] 用户登录
 - [ ] 发布物品
 - [ ] 换物流程

@@ -27,11 +27,21 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理可预期的业务失败（如用户名已存在、密码错误），保留业务状态码。
+     */
+    @ExceptionHandler(BusinessException.class)
+    public Result<Void> handleBusinessException(BusinessException ex) {
+        log.warn("业务异常: code={}, message={}", ex.getCode(), ex.getMessage());
+        return Result.error(ex.getCode(), ex.getMessage());
+    }
+
+    /**
      * 兜底处理其余未捕获异常。
      */
     @ExceptionHandler(Exception.class)
     public Result<Void> handleException(Exception ex) {
         log.error("服务器内部错误", ex);
+        // 只输出异常信息，不把堆栈返回给前端
         return Result.error(500, "服务器内部错误: " + ex.getMessage());
     }
 }

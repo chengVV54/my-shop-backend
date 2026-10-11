@@ -3,6 +3,13 @@
 -- 使用 INSERT IGNORE + 固定主键，保证重复启动不会重复插入。
 -- List 字段（images / want_categories）以 JSON 字符串形式存储。
 
+-- 测试用户（密码均为 123456，库里存的是 BCrypt 哈希，$2a$10$ 为 BCrypt 版本与 cost）
+INSERT IGNORE INTO users
+  (id, username, password, avatar, credit, created_at)
+VALUES
+  (1, 'zhangsan', '$2a$10$GPzfmy1XK8Aj3v87qlslTOf8cjsXO2jGyw9ZG1qLCtenc9LApryq2', NULL, 100, '2026-10-10 17:42:18'),
+  (2, 'lisi', '$2a$10$SGNjrLinWwqMuR5iq9gXKOSLZJafDuLETVJtpaqyWGcH5USJwi3lW', NULL, 100, '2026-10-10 17:42:18');
+
 INSERT IGNORE INTO items
   (id, title, images, description, category, `condition`, owner_id, mode, price,
    want_categories, want_description, allow_price_diff, status, created_at)

@@ -2,6 +2,16 @@
 -- 由 spring.sql.init.schema-locations 在应用启动时自动执行。
 -- 全部使用 CREATE TABLE IF NOT EXISTS，可重复执行。
 
+CREATE TABLE IF NOT EXISTS users (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(50) NOT NULL UNIQUE,
+  -- 存 BCrypt 哈希（60 字符），禁止明文
+  password VARCHAR(100) NOT NULL,
+  avatar VARCHAR(255),
+  credit INT DEFAULT 100,
+  created_at DATETIME
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS items (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   title VARCHAR(200) NOT NULL,

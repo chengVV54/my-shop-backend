@@ -155,7 +155,7 @@ jwt:
 | `POST /api/auth/register`、`POST /api/auth/login` | 否 |
 | `GET /api/items`、`GET /api/items/{id}` | 否（浏览商品无需登录） |
 | `GET /api/auth/me` | **是** |
-| `GET /api/barters` | **是** |
+| `GET /api/barters`、`POST /api/barters` | **是** |
 | `GET /api/orders` | **是** |
 | 其他 `/api/**`（为后续发布物品、下单等写操作预留） | **是** |
 
@@ -220,6 +220,7 @@ curl http://localhost:8080/api/health
 | GET | `/api/items` | 物品列表（支持 `?mode=BARTER/SALE/BOTH` 筛选） | 否 |
 | GET | `/api/items/{id}` | 物品详情 | 否 |
 | GET | `/api/barters` | 换物申请列表（MySQL） | 是 |
+| POST | `/api/barters` | 发起换物（1:1，`toItemId` 换 `fromItemId`） | 是 |
 | GET | `/api/orders` | 二手订单列表（MySQL） | 是 |
 
 调用示例：
@@ -249,6 +250,12 @@ TOKEN="<上一步返回的 token>"
 curl http://localhost:8080/api/auth/me      -H "Authorization: Bearer $TOKEN"
 curl http://localhost:8080/api/barters      -H "Authorization: Bearer $TOKEN"
 curl http://localhost:8080/api/orders       -H "Authorization: Bearer $TOKEN"
+
+# 发起换物：zhangsan(id=1) 用自己 id=5 的 Switch，换 lisi(id=2) 的 id=2《三体全集》
+curl -X POST http://localhost:8080/api/barters \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"toItemId":2,"fromItemId":5,"message":"想用 Switch OLED 换你的三体全集，可以详聊"}'
 
 # 不带 token 访问受保护接口 → HTTP 401
 curl -i http://localhost:8080/api/orders
@@ -294,8 +301,10 @@ curl -i http://localhost:8080/api/orders
 
 - `fromUserId` / `toUserId`：发起方与接收方用户 ID
 - `fromItemId` / `toItemId`：发起方提供的物品与想换取的物品
-- `priceDiff`：差价，`null` 表示不涉及差价
+- `priceDiff`：差价，`null` 表示不涉及差价；发起换物时会固定写成 `0.00`
 - `status`：`PENDING` / `ACCEPTED` / `REJECTED` / `DONE` / `CANCELLED`
+- 发起换物只支持 **1:1**：请求体传 `toItemId`（想换的）+ `fromItemId`（自己提供的），
+  `fromUserId` 取自登录态、`toUserId` 由目标物品的 `ownerId` 推导，两者都不接受前端传值
 
 ### OrderVO（二手订单）
 
@@ -360,6 +369,7 @@ src/main/java/com/myshop/
 │   ├── LoginResponse.java          # 登录响应（token + user）
 │   ├── ItemVO.java                 # 物品视图对象
 │   ├── BarterRequestVO.java        # 换物申请视图对象
+│   ├── CreateBarterRequest.java    # 发起换物请求体（校验注解，不含 userId）
 │   └── OrderVO.java                # 二手订单视图对象
 ├── util/
 │   └── JwtUtil.java                # JWT 签发与校验（jjwt 0.12.x）
@@ -376,6 +386,7 @@ src/main/resources/
 
 docs/
 ├── API.md                          # 接口文档（含鉴权说明与 curl 示例）
+├── ARCHITECTURE.md                 # 目录结构、分层约定与参考写法
 └── PROGRESS.md                     # 开发进度
 ```
 
@@ -394,4 +405,6 @@ docs/
 - [x] 用户系统（后端）：注册 / 登录 / JWT 鉴权 / 越权防护基础
 - [ ] 发布物品
 - [ ] 换物流程
+  - [x] 发起换物 `POST /api/barters`（登录 + 归属校验 + 重复申请拦截）
+  - [ ] 接受 / 拒绝 / 完成换物
 - [ ] 二手下单

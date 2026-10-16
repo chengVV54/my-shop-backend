@@ -26,12 +26,21 @@
   - [x] 接口保护：`/api/barters`、`/api/orders`、`/api/auth/me` 需登录；`GET /api/items` 保持匿名
   - [x] 两个测试用户（`zhangsan` / `lisi`，密码 `123456`，存 BCrypt 哈希）
   - [x] 文档：`README.md`、`docs/API.md`
+- [x] **发起换物 `POST /api/barters`（1:1）**
+  - [x] `CreateBarterRequest`（`toItemId` / `fromItemId` 必填，`message` ≤500 字）
+  - [x] `BarterService#create`：登录校验 → 目标物品校验 → 我方物品归属校验 → 重复申请拦截 → 落库
+  - [x] 发起方身份取自 `UserContext`，`toUserId` 由目标物品 `ownerId` 推导，不接受前端传 userId
+  - [x] 新申请固定 `status=PENDING`、`priceDiff=0`
+  - [x] 文档：`README.md`、`docs/API.md`、`docs/ARCHITECTURE.md`
 
 ## 待办
 
 - [ ] 发布物品（`POST /api/items`，登录 + `ownerId` 取自 `UserContext`）
 - [ ] 编辑 / 下架物品（`PUT` / `DELETE /api/items/{id}`，需校验 `owner_id` 归属）
-- [ ] 换物流程：发起 / 接受 / 拒绝 / 完成（发起前校验物品归属与状态）
+- [ ] 换物流程：接受 / 拒绝 / 完成（发起已完成，见上方）
+  - [ ] 接受 / 拒绝接口（只有 `toUserId` 本人能操作）
+  - [ ] 接受后把双方物品置为 `LOCKED`，完成时置为 `DONE`
+  - [ ] `(from_item_id, to_item_id, status)` 层面的并发兜底（应用层查重存在并发窗口）
 - [ ] 二手下单与订单状态流转（买家不能买自己的物品）
 - [ ] 头像上传与用户资料修改
 - [ ] 积分（`credit`）的增减规则

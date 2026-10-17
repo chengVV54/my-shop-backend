@@ -7,7 +7,9 @@ import com.myshop.service.BarterService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -49,5 +51,38 @@ public class BarterController {
     @PostMapping
     public Result<BarterRequestVO> create(@Valid @RequestBody CreateBarterRequest req) {
         return Result.success(barterService.create(req));
+    }
+
+    /**
+     * 换物申请详情，只有参与该申请的两个用户能查看。
+     *
+     * @param id 换物申请 ID
+     * @return 换物申请详情
+     */
+    @GetMapping("/{id}")
+    public Result<BarterRequestVO> detail(@PathVariable("id") Long id) {
+        return Result.success(barterService.getById(id));
+    }
+
+    /**
+     * 接收方同意换物申请，需要登录；只有 toUserId 本人能操作。
+     *
+     * @param id 换物申请 ID
+     * @return 更新后的换物申请（status = ACCEPTED）
+     */
+    @PutMapping("/{id}/accept")
+    public Result<BarterRequestVO> accept(@PathVariable("id") Long id) {
+        return Result.success(barterService.accept(id));
+    }
+
+    /**
+     * 接收方拒绝换物申请，需要登录；只有 toUserId 本人能操作。
+     *
+     * @param id 换物申请 ID
+     * @return 更新后的换物申请（status = REJECTED）
+     */
+    @PutMapping("/{id}/reject")
+    public Result<BarterRequestVO> reject(@PathVariable("id") Long id) {
+        return Result.success(barterService.reject(id));
     }
 }

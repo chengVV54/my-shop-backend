@@ -39,8 +39,8 @@ Authorization: Bearer <token>
 | `POST /api/auth/login` | 否 |
 | `GET /api/auth/me` | **是** |
 | `GET /api/items`、`GET /api/items/{id}` | 否 |
-| `GET /api/barters` | **是** |
-| `POST /api/barters` | **是** |
+| `GET /api/barters`、`GET /api/barters/{id}` | **是** |
+| `POST /api/barters`、`PUT /api/barters/{id}/accept`、`PUT /api/barters/{id}/reject` | **是** |
 | `GET /api/orders` | **是** |
 | 其他 `/api/**`（未来的写操作） | **是** |
 
@@ -335,6 +335,147 @@ curl -X POST http://localhost:8080/api/barters \
 { "code": 403, "message": "只能用自己的物品发起换物", "data": null }
 { "code": 400, "message": "已发起过换物申请，请等待对方处理", "data": null }
 ```
+
+### GET /api/barters/{id}
+
+换物申请详情，**需要登录**。只有该申请的**当事人**能查看：`fromUserId`（发起方）或
+`toUserId`（接收方）之一，其他人即使知道 `id` 也会被拒绝（`403 无权查看此换物申请`）。
+
+- 请求头：`Authorization: Bearer <token>`
+- 返回结构与列表中的单条元素一致
+- 不存在与无权查看是两种不同的业务码，便于前端区分「记录没了」与「不给你看」
+
+```bash
+TOKEN="<login 返回的 token>"
+curl http://localhost:8080/api/barters/2 -H "Authorization: Bearer $TOKEN"
+```
+
+成功响应（HTTP 200，以 id=2、`zhangsan`(1) → `lisi`(2) 的申请为例，双方都能看）：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 2,
+    "fromUserId": 1,
+    "toUserId": 2,
+    "fromItemId": 5,
+    "toItemId": 2,
+    "message": "用 Switch OLED 换你的三体全集，不用补差价，你看行吗？",
+    "priceDiff": 0.00,
+    "status": "ACCEPTED",
+    "createdAt": "2026-10-10 17:42:18"
+  }
+}
+```
+
+错误码（HTTP 200 + 业务码，除非另有说明）：
+
+| code | message | 触发条件 |
+| --- | --- | --- |
+| `401` | `未登录或登录已过期` | 未带 token / token 失效（由 Spring Security 拦截，HTTP 也是 401） |
+| `401` | `请先登录` | 进入 Service 后当前用户为空（兜底保护） |
+| `404` | `换物申请不存在` | `id` 对应的申请不存在 |
+| `403` | `无权查看此换物申请` | 当前用户既不是发起方也不是接收方 |
+
+失败响应示例：
+
+```json
+{ "code": 404, "message": "换物申请不存在", "data": null }
+{ "code": 403, "message": "无权查看此换物申请", "data": null }
+```
+
+### PUT /api/barters/{id}/accept
+
+**接收方同意**换物申请，**需要登录**。
+
+- 请求头：`Authorization: Bearer <token>`，无请求体
+- 权限：只有 `toUserId` 本人能操作，发起方自己也不能替对方同意，其他人更不行
+- 状态流转：`PENDING` → `ACCEPTED`；只有 `PENDING` 的申请能被处理，已同意 / 已拒绝 / 已完成再次调用返回 `400 该申请已被处理`
+- 副作用：同意成功后，双方物品（`fromItemId`、`toItemId`）的 `status` 被置为 `LOCKED`，
+  这样其它 PENDING 申请就无法再拿这两件物品发起新的换物（发起时的「物品不可换」校验会拦住）
+- 重复调用不会把 `ACCEPTED` 改成别的值：第二次调用会稳定返回 `400 该申请已被处理`，不会产生副作用
+
+```bash
+# 假设 id=2 仍为 PENDING（种子数据里它已初始化为 ACCEPTED，直接调用会得到 400 该申请已被处理）
+TOKEN="<lisi 的 token>"
+curl -X PUT http://localhost:8080/api/barters/2/accept -H "Authorization: Bearer $TOKEN"
+```
+
+成功响应（HTTP 200）：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 2,
+    "fromUserId": 1,
+    "toUserId": 2,
+    "fromItemId": 5,
+    "toItemId": 2,
+    "message": "用 Switch OLED 换你的三体全集，不用补差价，你看行吗？",
+    "priceDiff": 0.00,
+    "status": "ACCEPTED",
+    "createdAt": "2026-10-10 17:42:18"
+  }
+}
+```
+
+错误码（HTTP 200 + 业务码，除非另有说明）：
+
+| code | message | 触发条件 |
+| --- | --- | --- |
+| `401` | `未登录或登录已过期` | 未带 token / token 失效（由 Spring Security 拦截，HTTP 也是 401） |
+| `401` | `请先登录` | 进入 Service 后当前用户为空（兜底保护） |
+| `404` | `换物申请不存在` | `id` 对应的申请不存在 |
+| `403` | `只有接收方能处理该申请` | 当前用户不是 `toUserId`（包括发起方本人） |
+| `400` | `该申请已被处理` | 当前状态不是 `PENDING`（已同意 / 已拒绝 / 已完成 / 已取消） |
+
+失败响应示例：
+
+```json
+{ "code": 403, "message": "只有接收方能处理该申请", "data": null }
+{ "code": 400, "message": "该申请已被处理", "data": null }
+```
+
+### PUT /api/barters/{id}/reject
+
+**接收方拒绝**换物申请，**需要登录**。
+
+- 请求头：`Authorization: Bearer <token>`，无请求体
+- 权限：与 accept 相同，只有 `toUserId` 本人能操作
+- 状态流转：`PENDING` → `REJECTED`；同样只接受 `PENDING` 的申请
+- 副作用：**不改动物品状态**，双方物品继续保持 `AVAILABLE`，可以继续和别人换
+
+```bash
+# 同样假设 id=2 仍为 PENDING，实际可用刚创建的新申请替换该 id
+TOKEN="<lisi 的 token>"
+curl -X PUT http://localhost:8080/api/barters/2/reject -H "Authorization: Bearer $TOKEN"
+```
+
+成功响应（HTTP 200，仅 `status` 变为 `REJECTED`，其余字段不变）：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 2,
+    "fromUserId": 1,
+    "toUserId": 2,
+    "fromItemId": 5,
+    "toItemId": 2,
+    "message": "用 Switch OLED 换你的三体全集，不用补差价，你看行吗？",
+    "priceDiff": 0.00,
+    "status": "REJECTED",
+    "createdAt": "2026-10-10 17:42:18"
+  }
+}
+```
+
+错误码与 accept 完全一致（`401` / `404` / `403` / `400 该申请已被处理`）。
 
 ### GET /api/orders
 

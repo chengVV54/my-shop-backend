@@ -1,6 +1,7 @@
 package com.myshop.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.myshop.common.BusinessException;
 import com.myshop.config.UserContext;
 import com.myshop.entity.BarterRequest;
@@ -27,6 +28,7 @@ import java.util.Locale;
  * <ul>
  *     <li>当前用户身份只从 {@link UserContext} 取，忽略前端传来的任何用户 ID</li>
  *     <li>查询只返回与当前用户相关的数据（我发起的 / 我收到的），绝不返回全表</li>
+ *     <li>单条详情只对换物双方开放；同意 / 拒绝只对接收方开放，发起方不能替对方点头</li>
  *     <li>写操作时参与换物的物品必须存在、状态为 {@code AVAILABLE}，且我方物品必须属于当前用户</li>
  *     <li>失败一律抛 {@link BusinessException}，由全局异常处理转成统一返回体</li>
  * </ul>
@@ -41,8 +43,17 @@ public class BarterService {
     /** 新申请的初始状态：等待对方处理 */
     private static final String STATUS_PENDING = "PENDING";
 
+    /** 接收方同意后的状态 */
+    private static final String STATUS_ACCEPTED = "ACCEPTED";
+
+    /** 接收方拒绝后的状态 */
+    private static final String STATUS_REJECTED = "REJECTED";
+
     /** 物品唯一可参与换物的状态，LOCKED / DONE / REMOVED 都不允许再发起 */
     private static final String ITEM_STATUS_AVAILABLE = "AVAILABLE";
+
+    /** 换物达成后物品被锁定，防止同一件物品再被其他人换走 */
+    private static final String ITEM_STATUS_LOCKED = "LOCKED";
 
     /** 列表过滤方向：我发起的 */
     private static final String TYPE_FROM = "from";
@@ -162,6 +173,148 @@ public class BarterService {
 
         // 5. 查库并逐条转 VO，时间在 toVO 里统一格式化
         return barterRequestMapper.selectList(wrapper).stream().map(this::toVO).toList();
+    }
+
+    /**
+     * 查询单条换物申请详情。
+     *
+     * <p>详情属于换物双方的私密数据，只有发起方与接收方本人可以查看；
+     * 其他登录用户即使知道 id 也拿不到，统一返回 403，避免枚举 id 探测别人的交易。
+     *
+     * @param id 换物申请 ID
+     * @return 换物申请详情
+     * @throws BusinessException 未登录 401、申请不存在 404、非当事人 403
+     */
+    public BarterRequestVO getById(Long id) {
+        // 1. 身份只认登录态，不接受前端传用户 ID
+        Long userId = UserContext.getCurrentUserId();
+        if (userId == null) {
+            throw new BusinessException(401, "请先登录");
+        }
+
+        // 2. 查库：id 为空或库里没有这条记录，都按「不存在」处理
+        BarterRequest request = findById(id);
+
+        // 3. 归属校验：必须是发起方或接收方之一，否则一律 403（不让局外人知道这条申请的存在与内容）
+        if (!userId.equals(request.getFromUserId()) && !userId.equals(request.getToUserId())) {
+            throw new BusinessException(403, "无权查看此换物申请");
+        }
+
+        // 4. 实体只留在 Service 内，对外统一转 VO
+        return toVO(request);
+    }
+
+    /**
+     * 接收方同意换物申请：{@code PENDING → ACCEPTED}，并把双方物品锁定为 {@code LOCKED}。
+     *
+     * @param id 换物申请 ID
+     * @return 更新后的换物申请
+     * @throws BusinessException 未登录 401、申请不存在 404、非接收方 403、已被处理 400
+     */
+    @Transactional
+    public BarterRequestVO accept(Long id) {
+        return updateStatus(id, STATUS_ACCEPTED);
+    }
+
+    /**
+     * 接收方拒绝换物申请：{@code PENDING → REJECTED}，物品保持原状态不变。
+     *
+     * @param id 换物申请 ID
+     * @return 更新后的换物申请
+     * @throws BusinessException 未登录 401、申请不存在 404、非接收方 403、已被处理 400
+     */
+    @Transactional
+    public BarterRequestVO reject(Long id) {
+        return updateStatus(id, STATUS_REJECTED);
+    }
+
+    /**
+     * 同意 / 拒绝共用的状态流转逻辑。
+     *
+     * <p>校验顺序：登录 → 申请存在 → 只有接收方能操作 → 当前状态必须是 {@code PENDING}
+     * → 带 {@code status = PENDING} 条件更新（并发兜底）→ 同意时锁定双方物品。
+     *
+     * @param id           换物申请 ID
+     * @param targetStatus 目标状态：{@link #STATUS_ACCEPTED} 或 {@link #STATUS_REJECTED}
+     * @return 更新后的换物申请
+     * @throws BusinessException 未登录 401、申请不存在 404、非接收方 403、已被处理 400
+     */
+    private BarterRequestVO updateStatus(Long id, String targetStatus) {
+        // 1. 身份只认登录态
+        Long userId = UserContext.getCurrentUserId();
+        if (userId == null) {
+            throw new BusinessException(401, "请先登录");
+        }
+
+        // 2. 查库：不存在直接 404
+        BarterRequest request = findById(id);
+
+        // 3. 归属校验：只有「接收方」有权处理，发起方自己不能替对方同意（更不能用别人的 id 操作）
+        if (!userId.equals(request.getToUserId())) {
+            throw new BusinessException(403, "只有接收方能处理该申请");
+        }
+
+        // 4. 状态校验：只有待处理的申请能流转，已同意 / 已拒绝 / 已完成的一律拒绝重复操作
+        if (!STATUS_PENDING.equals(request.getStatus())) {
+            throw new BusinessException(400, "该申请已被处理");
+        }
+
+        // 5. 条件更新：把 status = PENDING 写进 WHERE，两个人同时点「同意」时只有一条能更新成功。
+        //    「先查后改」之间永远存在缝隙，这一步是并发兜底（未加唯一索引也能挡住双击 / 双端并发）。
+        LambdaUpdateWrapper<BarterRequest> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(BarterRequest::getId, id)
+                .eq(BarterRequest::getStatus, STATUS_PENDING)
+                .set(BarterRequest::getStatus, targetStatus);
+        int updated = barterRequestMapper.update(null, updateWrapper);
+        if (updated == 0) {
+            // 查询之后、更新之前状态被别人改掉了
+            throw new BusinessException(400, "该申请已被处理");
+        }
+
+        // 6. 同意后锁定双方物品，避免同一件物品再被其他人发起换物（拒绝则物品状态不动）
+        if (STATUS_ACCEPTED.equals(targetStatus)) {
+            lockItem(request.getFromItemId());
+            lockItem(request.getToItemId());
+        }
+
+        // 7. 数据库已更新，把内存里的实体同步成新状态后再转 VO 返回
+        request.setStatus(targetStatus);
+        return toVO(request);
+    }
+
+    /**
+     * 按 ID 查换物申请，不存在时抛 404。
+     *
+     * @param id 换物申请 ID，可能为 null
+     * @return 数据库中的换物申请实体
+     * @throws BusinessException 不存在时抛 404
+     */
+    private BarterRequest findById(Long id) {
+        if (id == null) {
+            throw new BusinessException(404, "换物申请不存在");
+        }
+        BarterRequest request = barterRequestMapper.selectById(id);
+        if (request == null) {
+            throw new BusinessException(404, "换物申请不存在");
+        }
+        return request;
+    }
+
+    /**
+     * 把物品置为 {@link #ITEM_STATUS_LOCKED}。
+     *
+     * <p>用 {@code set status} 的定向更新，只改这一列，不会被并发请求用旧值覆盖标题、价格等其它字段。
+     *
+     * @param itemId 物品 ID，为 null 时直接跳过（正常数据不会为 null，这里只做防御）
+     */
+    private void lockItem(Long itemId) {
+        if (itemId == null) {
+            return;
+        }
+        LambdaUpdateWrapper<Item> lockWrapper = new LambdaUpdateWrapper<>();
+        lockWrapper.eq(Item::getId, itemId)
+                .set(Item::getStatus, ITEM_STATUS_LOCKED);
+        itemMapper.update(null, lockWrapper);
     }
 
     /**

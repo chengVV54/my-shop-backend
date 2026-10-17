@@ -155,7 +155,8 @@ jwt:
 | `POST /api/auth/register`、`POST /api/auth/login` | 否 |
 | `GET /api/items`、`GET /api/items/{id}` | 否（浏览商品无需登录） |
 | `GET /api/auth/me` | **是** |
-| `GET /api/barters`、`POST /api/barters` | **是** |
+| `GET /api/barters`、`GET /api/barters/{id}`、`POST /api/barters` | **是** |
+| `PUT /api/barters/{id}/accept`、`PUT /api/barters/{id}/reject` | **是** |
 | `GET /api/orders` | **是** |
 | 其他 `/api/**`（为后续发布物品、下单等写操作预留） | **是** |
 
@@ -220,7 +221,10 @@ curl http://localhost:8080/api/health
 | GET | `/api/items` | 物品列表（支持 `?mode=BARTER/SALE/BOTH` 筛选） | 否 |
 | GET | `/api/items/{id}` | 物品详情 | 否 |
 | GET | `/api/barters` | 我的换物列表（支持 `?type=from/to/all`） | 是 |
+| GET | `/api/barters/{id}` | 换物申请详情（仅当事人可见） | 是 |
 | POST | `/api/barters` | 发起换物（1:1，`toItemId` 换 `fromItemId`） | 是 |
+| PUT | `/api/barters/{id}/accept` | 接收方同意换物（`PENDING → ACCEPTED`，双方物品置 `LOCKED`） | 是 |
+| PUT | `/api/barters/{id}/reject` | 接收方拒绝换物（`PENDING → REJECTED`） | 是 |
 | GET | `/api/orders` | 二手订单列表（MySQL） | 是 |
 
 调用示例：
@@ -262,6 +266,14 @@ curl -X POST http://localhost:8080/api/barters \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"toItemId":2,"fromItemId":5,"message":"想用 Switch OLED 换你的三体全集，可以详聊"}'
+
+# 换物详情：只有当事人（发起方 / 接收方）能看，局外人 → 403 无权查看此换物申请
+curl http://localhost:8080/api/barters/1 -H "Authorization: Bearer $TOKEN"
+
+# 同意 / 拒绝：只有接收方能操作。种子数据 id=1 是 lisi 发起、zhangsan 接收，所以用 zhangsan 的 token
+curl -X PUT http://localhost:8080/api/barters/1/accept -H "Authorization: Bearer $TOKEN"
+# 注意：同一条申请被处理后，再调用 /accept 或 /reject 都会返回 400 该申请已被处理
+curl -X PUT http://localhost:8080/api/barters/1/reject -H "Authorization: Bearer $TOKEN"
 
 # 不带 token 访问受保护接口 → HTTP 401
 curl -i http://localhost:8080/api/orders
@@ -309,8 +321,12 @@ curl -i http://localhost:8080/api/orders
 - `fromItemId` / `toItemId`：发起方提供的物品与想换取的物品
 - `priceDiff`：差价，`null` 表示不涉及差价；发起换物时会固定写成 `0.00`
 - `status`：`PENDING` / `ACCEPTED` / `REJECTED` / `DONE` / `CANCELLED`
+  - 状态流转：发起 → `PENDING`；接收方同意 → `ACCEPTED`（双方物品同时置 `LOCKED`）；接收方拒绝 → `REJECTED`（物品状态不变）
+  - 只有 `PENDING` 能被处理，已处理的申请再次操作返回 `400 该申请已被处理`
 - 发起换物只支持 **1:1**：请求体传 `toItemId`（想换的）+ `fromItemId`（自己提供的），
   `fromUserId` 取自登录态、`toUserId` 由目标物品的 `ownerId` 推导，两者都不接受前端传值
+- 越权边界：详情只对 `fromUserId` / `toUserId` 开放；同意 / 拒绝只对接收方 `toUserId` 开放，
+  发起方不能替对方点头
 
 ### OrderVO（二手订单）
 
@@ -413,5 +429,7 @@ docs/
 - [x] 换物流程
   - [x] 发起换物 `POST /api/barters`（登录 + 归属校验 + 重复申请拦截）
   - [x] 我的换物列表 `GET /api/barters?type=from/to/all`（只查当前用户相关数据）
-  - [ ] 接受 / 拒绝 / 完成换物
+  - [x] 换物详情 `GET /api/barters/{id}`（只有当事人能看）
+  - [x] 接受 / 拒绝 `PUT /api/barters/{id}/accept`、`/reject`（只有接收方能操作，同意后物品 `LOCKED`）
+  - [ ] 完成换物 `ACCEPTED → DONE`
 - [ ] 二手下单

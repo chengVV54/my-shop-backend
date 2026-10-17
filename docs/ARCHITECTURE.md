@@ -21,7 +21,7 @@ src/main/java/com/myshop/
 │   ├── HealthController.java         # GET /api/health
 │   ├── AuthController.java           # 注册 / 登录 / 当前用户
 │   ├── ItemController.java           # 物品列表与详情
-│   ├── BarterController.java         # 换物申请（列表 + 发起）
+│   ├── BarterController.java         # 换物申请（列表 + 详情 + 发起 + 同意/拒绝）
 │   └── OrderController.java          # 二手订单列表
 ├── entity/                           # 数据库表实体，字段与表结构一一对应，仅供 Mapper 与 Service 使用
 │   ├── User.java                     # users
@@ -40,7 +40,7 @@ src/main/java/com/myshop/
 ├── service/                          # 业务层：校验、鉴权、事务、entity ↔ VO 转换都在这里
 │   ├── AuthService.java              # 注册 / 登录 / 当前用户（写操作参考）
 │   ├── ItemService.java              # 物品查询，JSON 字段与 List 互转
-│   ├── BarterService.java            # 换物申请：list + create
+│   ├── BarterService.java            # 换物申请：list / create / getById / accept / reject
 │   └── OrderService.java             # 二手订单查询
 └── util/
     └── JwtUtil.java                  # JWT 签发与校验（jjwt 0.12.x）
@@ -137,6 +137,10 @@ public class BarterController {
   if (!fromUserId.equals(fromItem.getOwnerId())) {
       throw new BusinessException(403, "只能用自己的物品发起换物");
   }
+  // 处理换物申请：只认接收方，发起方不能替对方同意 / 拒绝
+  if (!userId.equals(request.getToUserId())) {
+      throw new BusinessException(403, "只有接收方能处理该申请");
+  }
   ```
 
 ### 业务异常 `BusinessException`
@@ -159,6 +163,9 @@ public class BarterController {
 | --- | --- | --- | --- | --- |
 | GET | `/api/barters` | 我的换物列表（`?type=from/to/all`） | 是 | `BarterController#list` → `BarterService#list` |
 | POST | `/api/barters` | 发起换物（1:1） | 是 | `BarterController#create` → `BarterService#create` |
+| GET | `/api/barters/{id}` | 换物详情（仅当事人） | 是 | `BarterController#detail` → `BarterService#getById` |
+| PUT | `/api/barters/{id}/accept` | 接收方同意（`PENDING → ACCEPTED`） | 是 | `BarterController#accept` → `BarterService#accept` |
+| PUT | `/api/barters/{id}/reject` | 接收方拒绝（`PENDING → REJECTED`） | 是 | `BarterController#reject` → `BarterService#reject` |
 
 `BarterService#list` 的处理顺序：
 
@@ -184,4 +191,23 @@ public class BarterController {
    `priceDiff = 0`、`status = PENDING`、`createdAt = now()`，`insert` 后主键自动回填
 6. `toVO(entity)` 返回
 
-请求 / 响应示例与完整错误码见 [API.md](./API.md) 的「POST /api/barters」。
+`BarterService#getById` 的处理顺序：
+
+1. 从 `UserContext` 取当前用户，为空 → `401 请先登录`
+2. `id` 为空或 `selectById` 查不到 → `404 换物申请不存在`
+3. 归属校验：`userId` 既不等于 `fromUserId` 也不等于 `toUserId` → `403 无权查看此换物申请`
+4. `toVO(entity)` 返回，实体不出 Service
+
+`BarterService#accept` / `#reject` 共用私有方法 `updateStatus(id, targetStatus)`：
+
+1. 从 `UserContext` 取当前用户，为空 → `401 请先登录`
+2. 查不到 → `404 换物申请不存在`
+3. 归属校验：`userId` 不等于 `toUserId` → `403 只有接收方能处理该申请`（发起方也不能替对方点头）
+4. 状态校验：`status` 不是 `PENDING` → `400 该申请已被处理`
+5. 并发兜底：用 `LambdaUpdateWrapper` 把 `status = PENDING` 也写进 `WHERE`，
+   受影响行数为 0 说明查询后被别人改掉了，同样返回 `400 该申请已被处理`
+6. `ACCEPTED` 时把 `fromItemId`、`toItemId` 两件物品定向更新为 `LOCKED`（只 `SET status`，不覆盖其它列）；
+   `REJECTED` 不动物品
+7. 把内存实体的 `status` 同步为目标值后 `toVO` 返回；方法标 `@Transactional`，状态与物品锁定同生共死
+
+请求 / 响应示例与完整错误码见 [API.md](./API.md)。

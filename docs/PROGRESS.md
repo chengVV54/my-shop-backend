@@ -38,15 +38,31 @@
   - [x] 按 `created_at` 倒序，同一时刻按 `id` 倒序，保证顺序稳定
   - [x] 未登录 `401 请先登录`，非法 `type` 返回 `400 无效的 type 参数`
   - [x] 文档：`README.md`、`docs/API.md`、`docs/ARCHITECTURE.md`
+- [x] **换物详情 `GET /api/barters/{id}`**
+  - [x] 只有当事人（`fromUserId` 或 `toUserId`）能查看，其他人 `403 无权查看此换物申请`
+  - [x] 不存在（含 `id` 为空）返回 `404 换物申请不存在`，未登录 `401 请先登录`
+  - [x] 返回 `BarterRequestVO`，时间格式化为 `yyyy-MM-dd HH:mm:ss`
+- [x] **同意 / 拒绝换物 `PUT /api/barters/{id}/accept`、`PUT /api/barters/{id}/reject`**
+  - [x] 只有接收方（`toUserId`）能操作，其他人（含发起方）`403 只有接收方能处理该申请`
+  - [x] 只允许 `PENDING` 流转到 `ACCEPTED` / `REJECTED`，其他状态 `400 该申请已被处理`
+  - [x] 条件更新（`WHERE id = ? AND status = 'PENDING'`）做并发兜底，双击 / 双端同时操作只有一次成功
+  - [x] 同意后把双方物品置为 `LOCKED`，防止被其他人再换走；拒绝不改物品状态
+  - [x] 方法加 `@Transactional`，状态更新与物品锁定同生共死
+  - [x] 文档：`README.md`、`docs/API.md`、`docs/ARCHITECTURE.md`
 
 ## 待办
 
 - [ ] 发布物品（`POST /api/items`，登录 + `ownerId` 取自 `UserContext`）
 - [ ] 编辑 / 下架物品（`PUT` / `DELETE /api/items/{id}`，需校验 `owner_id` 归属）
-- [ ] 换物流程：接受 / 拒绝 / 完成（发起已完成，见上方）
-  - [ ] 接受 / 拒绝接口（只有 `toUserId` 本人能操作）
-  - [ ] 接受后把双方物品置为 `LOCKED`，完成时置为 `DONE`
-  - [ ] `(from_item_id, to_item_id, status)` 层面的并发兜底（应用层查重存在并发窗口）
+- [ ] 换物流程
+  - [x] 发起（`POST /api/barters`）
+  - [x] 详情（`GET /api/barters/{id}`）
+  - [x] 接受 / 拒绝（`PUT /api/barters/{id}/accept`、`/reject`）
+  - [ ] 完成换物：`ACCEPTED` → `DONE`，双方物品 `LOCKED` → `DONE`
+  - [ ] 取消换物：发起方撤回 `PENDING` 申请（`CANCELLED`）
+  - [ ] 同意后把同一对物品的其它 `PENDING` 申请自动置为 `REJECTED`（当前靠物品 `LOCKED` 间接拦住新申请）
+  - [ ] `(from_item_id, to_item_id, status)` 层面的并发兜底（应用层查重 + 本次条件更新已缓解，DB 唯一索引仍未加）
+
 - [ ] 二手下单与订单状态流转（买家不能买自己的物品）
 - [ ] 头像上传与用户资料修改
 - [ ] 积分（`credit`）的增减规则

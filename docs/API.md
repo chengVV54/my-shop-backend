@@ -39,6 +39,7 @@ Authorization: Bearer <token>
 | `POST /api/auth/login` | 否 |
 | `GET /api/auth/me` | **是** |
 | `GET /api/items`、`GET /api/items/{id}` | 否 |
+| `POST /api/items` | **是** |
 | `GET /api/barters`、`GET /api/barters/{id}` | **是** |
 | `POST /api/barters`、`PUT /api/barters/{id}/accept`、`PUT /api/barters/{id}/reject` | **是** |
 | `GET /api/orders` | **是** |
@@ -193,6 +194,93 @@ curl http://localhost:8080/api/items/1
 ```
 
 ItemVO 字段说明见项目根目录 `README.md` 的「数据模型」章节。
+
+### POST /api/items
+
+发布物品，**需要登录**。
+
+- 请求头：`Authorization: Bearer <token>`、`Content-Type: application/json`
+- 发布者身份取自 JWT，**请求体里没有也不需要 `ownerId`**：`ownerId` = 当前登录用户
+- 新物品的 `status` 固定为 `AVAILABLE`，`createdAt` 由服务端写入，前端传了也会被忽略
+- `price` 与 `mode` 联动：`mode=BARTER` 时可不传；`mode=SALE` / `BOTH` 时必填且必须大于 0
+- `wantCategories` 会被序列化成 JSON 字符串存库，返回时再还原成字符串数组
+
+请求体：
+
+| 字段 | 类型 | 必填 | 约束 | 说明 |
+| --- | --- | --- | --- | --- |
+| `title` | string | 是 | 最长 200 字 | 物品标题 |
+| `description` | string | 否 | — | 物品详细描述 |
+| `category` | string | 是 | 最长 50 字，如 `CAMERA` / `BOOK` | 物品分类 |
+| `condition` | string | 是 | 最长 50 字，如 `NEW` / `GOOD` | 物品成色 |
+| `mode` | string | 是 | `BARTER` / `SALE` / `BOTH`，大小写不敏感 | 交易方式 |
+| `price` | number | 条件 | `mode` 为 `SALE` / `BOTH` 时必填且 > 0 | 售价 |
+| `wantCategories` | string[] | 否 | — | 想换取的物品分类，`BARTER` / `BOTH` 时有意义 |
+| `wantDescription` | string | 否 | 最长 500 字 | 想换什么的补充描述 |
+| `allowPriceDiff` | boolean | 否 | — | 是否接受补差价 |
+
+```bash
+TOKEN="<login 返回的 token>"
+curl -X POST http://localhost:8080/api/items \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "title": "九成新富士 X-T30 微单",
+    "description": "2024 年购入，快门数不到 5000，配 15-45 套头",
+    "category": "CAMERA",
+    "condition": "GOOD",
+    "mode": "BOTH",
+    "price": 4200.00,
+    "wantCategories": ["PHONE", "COMPUTER"],
+    "wantDescription": "想换 iPhone 15 或轻薄本，可补差价",
+    "allowPriceDiff": true
+  }'
+```
+
+成功响应（HTTP 200，`id` 为数据库自增主键）：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 7,
+    "title": "九成新富士 X-T30 微单",
+    "images": [],
+    "description": "2024 年购入，快门数不到 5000，配 15-45 套头",
+    "category": "CAMERA",
+    "condition": "GOOD",
+    "ownerId": 1,
+    "mode": "BOTH",
+    "price": 4200.00,
+    "wantCategories": ["PHONE", "COMPUTER"],
+    "wantDescription": "想换 iPhone 15 或轻薄本，可补差价",
+    "allowPriceDiff": true,
+    "status": "AVAILABLE",
+    "createdAt": "2026-10-16 23:55:12"
+  }
+}
+```
+
+错误码（HTTP 200 + 业务码，除非另有说明）：
+
+| code | message | 触发条件 |
+| --- | --- | --- |
+| `401` | `未登录或登录已过期` | 未带 token / token 失效（由 Spring Security 拦截，HTTP 也是 401） |
+| `401` | `请先登录` | 进入 Service 后当前用户为空（兜底保护） |
+| `400` | `title 不能为空` / `title 长度不能超过 200 字` | 标题缺失或超长 |
+| `400` | `category 不能为空` / `condition 不能为空` / `mode 不能为空` | 必填字段缺失 |
+| `400` | `mode 取值必须为 BARTER / SALE / BOTH` | `mode` 不是三种取值之一 |
+| `400` | `mode 为 SALE 或 BOTH 时 price 不能为空` | 售卖相关模式下没传 `price` |
+| `400` | `price 必须大于 0` | `price` 为 0 或负数 |
+| `400` | `wantDescription 长度不能超过 500 字` | 换物描述超长 |
+
+失败响应示例：
+
+```json
+{ "code": 400, "message": "mode 为 SALE 或 BOTH 时 price 不能为空", "data": null }
+{ "code": 400, "message": "price 必须大于 0", "data": null }
+```
 
 ### GET /api/barters
 

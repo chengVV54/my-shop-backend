@@ -1,11 +1,15 @@
 package com.myshop.controller;
 
 import com.myshop.common.Result;
+import com.myshop.model.CreateItemRequest;
 import com.myshop.model.ItemVO;
 import com.myshop.service.ItemService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,6 +35,19 @@ public class ItemController {
     @GetMapping
     public Result<List<ItemVO>> list(@RequestParam(value = "mode", required = false) String mode) {
         return Result.success(itemService.listAll(mode));
+    }
+
+    /**
+     * 发布物品，需要登录。
+     *
+     * <p>发布者身份由 {@code UserContext} 从 JWT 中取，请求体里没有 {@code ownerId}。
+     *
+     * @param req 发布物品请求体
+     * @return 新建的物品
+     */
+    @PostMapping
+    public Result<ItemVO> create(@Valid @RequestBody CreateItemRequest req) {
+        return Result.success(itemService.create(req));
     }
 
     /**

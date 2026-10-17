@@ -4,13 +4,18 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myshop.common.BusinessException;
+import com.myshop.config.UserContext;
 import com.myshop.entity.Item;
 import com.myshop.mapper.ItemMapper;
+import com.myshop.model.CreateItemRequest;
 import com.myshop.model.ItemVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -32,9 +37,64 @@ public class ItemService {
     private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {
     };
 
+    /** 新发布物品的初始状态：可交易 */
+    private static final String STATUS_AVAILABLE = "AVAILABLE";
+
+    /** 交易方式：只换不卖 */
+    private static final String MODE_BARTER = "BARTER";
+
+    /** 交易方式：只卖不换 */
+    private static final String MODE_SALE = "SALE";
+
+    /** 交易方式：可卖可换 */
+    private static final String MODE_BOTH = "BOTH";
+
     private final ItemMapper itemMapper;
 
     private final ObjectMapper objectMapper;
+
+    /**
+     * 发布物品。
+     *
+     * <p>发布者身份只取登录态，不接受前端传入的 {@code ownerId}；
+     * 价格必填性依赖 {@code mode}，属于跨字段规则，在这里校验。
+     *
+     * @param req 发布物品请求体，非空字段已由 {@code @Valid} 保证
+     * @return 新建的物品（含数据库自增 ID、状态与创建时间）
+     * @throws BusinessException 未登录 401、价格缺失 / 非正数 400、mode 非法 400
+     */
+    @Transactional
+    public ItemVO create(CreateItemRequest req) {
+        // 1. 身份只认 JWT 解析结果：ThreadLocal 里的用户由 JwtAuthenticationFilter 写入
+        Long userId = UserContext.getCurrentUserId();
+        if (userId == null) {
+            throw new BusinessException(401, "请先登录");
+        }
+
+        // 2. 归一化 mode（大小写不敏感），并做「SALE / BOTH 时 price 必填且 > 0」的条件校验
+        String mode = normalizeMode(req.getMode());
+        validatePrice(mode, req.getPrice());
+
+        // 3. 组装实体：ownerId / status / createdAt 全部由服务端决定，前端无法伪造
+        Item item = new Item();
+        item.setTitle(req.getTitle().trim());
+        item.setDescription(req.getDescription());
+        item.setCategory(req.getCategory().trim());
+        item.setCondition(req.getCondition().trim());
+        item.setOwnerId(userId);
+        item.setMode(mode);
+        item.setPrice(req.getPrice());
+        // 列表字段在库中是 JSON 字符串，复用已有的序列化方法；为 null 时保持 NULL
+        item.setWantCategories(writeJsonList(req.getWantCategories()));
+        item.setWantDescription(req.getWantDescription());
+        item.setAllowPriceDiff(req.getAllowPriceDiff());
+        item.setStatus(STATUS_AVAILABLE);
+        item.setCreatedAt(LocalDateTime.now());
+        itemMapper.insert(item);
+
+        // 4. insert 会把自增主键回填进 entity.id，直接转 VO 返回，实体不出 Service
+        return toVO(item);
+    }
 
     /**
      * 查询物品列表，可按交易方式过滤。
@@ -66,6 +126,46 @@ public class ItemService {
     }
 
     /**
+     * 归一化交易方式：去空白并转大写。
+     *
+     * <p>请求体上的 {@code @Pattern} 已做过一次大小写不敏感的格式校验，
+     * 这里再做一次兜底，避免非法值被原样写进库。
+     *
+     * @param mode 前端传入的原始交易方式
+     * @return 恒为 {@link #MODE_BARTER}、{@link #MODE_SALE}、{@link #MODE_BOTH} 之一
+     * @throws BusinessException 为空或取值非法时抛 400
+     */
+    private String normalizeMode(String mode) {
+        if (!StringUtils.hasText(mode)) {
+            throw new BusinessException(400, "mode 不能为空");
+        }
+        String normalized = mode.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case MODE_BARTER, MODE_SALE, MODE_BOTH -> normalized;
+            default -> throw new BusinessException(400, "无效的 mode 参数");
+        };
+    }
+
+    /**
+     * 按交易方式校验价格：SALE / BOTH 必须传 price 且大于 0，BARTER 不要求。
+     *
+     * @param mode  归一化后的交易方式
+     * @param price 售价，可能为 null
+     * @throws BusinessException 价格缺失或非正数时抛 400
+     */
+    private void validatePrice(String mode, BigDecimal price) {
+        if (!MODE_SALE.equals(mode) && !MODE_BOTH.equals(mode)) {
+            return;
+        }
+        if (price == null) {
+            throw new BusinessException(400, "mode 为 SALE 或 BOTH 时 price 不能为空");
+        }
+        if (price.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException(400, "price 必须大于 0");
+        }
+    }
+
+    /**
      * 实体转视图对象：JSON 字符串字段还原成列表，时间格式化成字符串。
      */
     private ItemVO toVO(Item item) {
@@ -92,7 +192,7 @@ public class ItemService {
 
     /**
      * 视图对象转实体：列表序列化成 JSON 字符串，时间字符串解析成 {@link LocalDateTime}。
-     * 供后续「发布物品」等写入场景使用，与 {@link #toVO(Item)} 互为逆操作。
+     * 供后续「编辑物品」等写入场景使用，与 {@link #toVO(Item)} 互为逆操作。
      */
     private Item toEntity(ItemVO vo) {
         if (vo == null) {

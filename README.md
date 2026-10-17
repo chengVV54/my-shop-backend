@@ -154,6 +154,7 @@ jwt:
 | `GET /api/health` | 否 |
 | `POST /api/auth/register`、`POST /api/auth/login` | 否 |
 | `GET /api/items`、`GET /api/items/{id}` | 否（浏览商品无需登录） |
+| `POST /api/items` | **是** |
 | `GET /api/auth/me` | **是** |
 | `GET /api/barters`、`GET /api/barters/{id}`、`POST /api/barters` | **是** |
 | `PUT /api/barters/{id}/accept`、`PUT /api/barters/{id}/reject` | **是** |
@@ -220,6 +221,7 @@ curl http://localhost:8080/api/health
 | GET | `/api/auth/me` | 当前登录用户信息 | 是 |
 | GET | `/api/items` | 物品列表（支持 `?mode=BARTER/SALE/BOTH` 筛选） | 否 |
 | GET | `/api/items/{id}` | 物品详情 | 否 |
+| POST | `/api/items` | 发布物品（`ownerId` 取自登录态） | 是 |
 | GET | `/api/barters` | 我的换物列表（支持 `?type=from/to/all`） | 是 |
 | GET | `/api/barters/{id}` | 换物申请详情（仅当事人可见） | 是 |
 | POST | `/api/barters` | 发起换物（1:1，`toItemId` 换 `fromItemId`） | 是 |
@@ -390,6 +392,7 @@ src/main/java/com/myshop/
 │   ├── LoginRequest.java           # 登录请求体
 │   ├── LoginResponse.java          # 登录响应（token + user）
 │   ├── ItemVO.java                 # 物品视图对象
+│   ├── CreateItemRequest.java      # 发布物品请求体（校验注解，不含 ownerId）
 │   ├── BarterRequestVO.java        # 换物申请视图对象
 │   ├── CreateBarterRequest.java    # 发起换物请求体（校验注解，不含 userId）
 │   └── OrderVO.java                # 二手订单视图对象
@@ -425,7 +428,7 @@ docs/
 - [x] 订单接口（假数据）
 - [x] 数据库接入（MySQL + MyBatis-Plus）
 - [x] 用户系统（后端）：注册 / 登录 / JWT 鉴权 / 越权防护基础
-- [ ] 发布物品
+- [x] 发布物品 `POST /api/items`（登录 + `ownerId` 取自登录态）
 - [x] 换物流程
   - [x] 发起换物 `POST /api/barters`（登录 + 归属校验 + 重复申请拦截）
   - [x] 我的换物列表 `GET /api/barters?type=from/to/all`（只查当前用户相关数据）

@@ -50,9 +50,16 @@
   - [x] 方法加 `@Transactional`，状态更新与物品锁定同生共死
   - [x] 文档：`README.md`、`docs/API.md`、`docs/ARCHITECTURE.md`
 
+- [x] **发布物品 `POST /api/items`（后端）**
+  - [x] `CreateItemRequest`（`title` 必填 ≤200、`category` / `condition` / `mode` 必填、`price` 条件必填、`wantDescription` ≤500）
+  - [x] `ItemService#create`：登录校验（401）→ `mode` 归一化 → 价格条件校验 → 组装实体 → 落库 → 转 `ItemVO`
+  - [x] `ownerId` 取自 `UserContext`，`status` 固定 `AVAILABLE`、`createdAt` 服务端写入
+  - [x] `wantCategories` 由 `List<String>` 序列化成 JSON 字符串入库
+  - [x] `ItemController#create`：`POST /api/items`，`@Valid @RequestBody`，返回 `Result<ItemVO>`
+  - [x] 文档：`docs/API.md`、`docs/PROGRESS.md`
+
 ## 待办
 
-- [ ] 发布物品（`POST /api/items`，登录 + `ownerId` 取自 `UserContext`）
 - [ ] 编辑 / 下架物品（`PUT` / `DELETE /api/items/{id}`，需校验 `owner_id` 归属）
 - [ ] 换物流程
   - [x] 发起（`POST /api/barters`）

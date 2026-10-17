@@ -12,6 +12,7 @@ import com.myshop.model.CreateBarterRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -22,10 +23,11 @@ import java.util.Locale;
 /**
  * 换物申请业务逻辑：数据来自 MySQL 的 {@code barter_requests} 表，对外返回 {@link BarterRequestVO} 不变。
  *
- * <p>写操作的安全约定（与 {@code AuthService} 一致）：
+ * <p>安全约定（与 {@code AuthService} 一致）：
  * <ul>
- *     <li>发起方身份只从 {@link UserContext} 取，忽略前端传来的任何用户 ID</li>
- *     <li>参与换物的物品必须存在、状态为 {@code AVAILABLE}，且我方物品必须属于当前用户</li>
+ *     <li>当前用户身份只从 {@link UserContext} 取，忽略前端传来的任何用户 ID</li>
+ *     <li>查询只返回与当前用户相关的数据（我发起的 / 我收到的），绝不返回全表</li>
+ *     <li>写操作时参与换物的物品必须存在、状态为 {@code AVAILABLE}，且我方物品必须属于当前用户</li>
  *     <li>失败一律抛 {@link BusinessException}，由全局异常处理转成统一返回体</li>
  * </ul>
  */
@@ -41,6 +43,15 @@ public class BarterService {
 
     /** 物品唯一可参与换物的状态，LOCKED / DONE / REMOVED 都不允许再发起 */
     private static final String ITEM_STATUS_AVAILABLE = "AVAILABLE";
+
+    /** 列表过滤方向：我发起的 */
+    private static final String TYPE_FROM = "from";
+
+    /** 列表过滤方向：我收到的 */
+    private static final String TYPE_TO = "to";
+
+    /** 列表过滤方向：全部（我发起的 + 我收到的） */
+    private static final String TYPE_ALL = "all";
 
     private final BarterRequestMapper barterRequestMapper;
 
@@ -115,14 +126,60 @@ public class BarterService {
     }
 
     /**
-     * 查询全部换物申请。
+     * 查询「我的换物列表」：只返回与当前登录用户相关的换物申请。
      *
-     * @return 换物申请列表，按 id 升序
+     * <p>过滤方向由 {@code type} 决定：{@code from} 我发起的、{@code to} 我收到的、
+     * {@code all}（含不传、空串）两者合并。身份取自 {@link UserContext}，
+     * 前端无法通过参数查询别人的换物申请。
+     *
+     * @param type 过滤方向：{@code from} / {@code to} / {@code all}，大小写不敏感
+     * @return 换物申请列表，按创建时间倒序（同一时刻再按 id 倒序，保证顺序稳定）
+     * @throws BusinessException 未登录 401、type 取值非法 400
      */
-    public List<BarterRequestVO> listAll() {
+    public List<BarterRequestVO> list(String type) {
+        // 1. 身份只认登录态；Security 已拦截未登录请求，这里是 Service 层的兜底
+        Long userId = UserContext.getCurrentUserId();
+        if (userId == null) {
+            throw new BusinessException(401, "请先登录");
+        }
+
+        // 2. 先把 type 归一化成 from / to / all，非法值在这里被拒绝，避免拼接出奇怪的条件
+        String direction = normalizeType(type);
+
+        // 3. 按方向拼查询条件：只查当前用户参与的数据
         LambdaQueryWrapper<BarterRequest> wrapper = new LambdaQueryWrapper<>();
-        wrapper.orderByAsc(BarterRequest::getId);
+        switch (direction) {
+            case TYPE_FROM -> wrapper.eq(BarterRequest::getFromUserId, userId);
+            case TYPE_TO -> wrapper.eq(BarterRequest::getToUserId, userId);
+            default -> wrapper.and(w -> w.eq(BarterRequest::getFromUserId, userId)
+                    .or()
+                    .eq(BarterRequest::getToUserId, userId));
+        }
+
+        // 4. 最新申请排在前面；created_at 可能相同，追加 id 倒序让结果稳定可预期
+        wrapper.orderByDesc(BarterRequest::getCreatedAt)
+                .orderByDesc(BarterRequest::getId);
+
+        // 5. 查库并逐条转 VO，时间在 toVO 里统一格式化
         return barterRequestMapper.selectList(wrapper).stream().map(this::toVO).toList();
+    }
+
+    /**
+     * 归一化列表过滤方向。
+     *
+     * @param type 前端传入的原始值，可为 null / 空串
+     * @return 恒为 {@link #TYPE_FROM}、{@link #TYPE_TO}、{@link #TYPE_ALL} 之一
+     * @throws BusinessException 传入其他值时抛 400
+     */
+    private String normalizeType(String type) {
+        if (!StringUtils.hasText(type)) {
+            return TYPE_ALL;
+        }
+        String normalized = type.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case TYPE_FROM, TYPE_TO, TYPE_ALL -> normalized;
+            default -> throw new BusinessException(400, "无效的 type 参数");
+        };
     }
 
     /**

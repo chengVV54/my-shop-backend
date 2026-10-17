@@ -32,6 +32,12 @@
   - [x] 发起方身份取自 `UserContext`，`toUserId` 由目标物品 `ownerId` 推导，不接受前端传 userId
   - [x] 新申请固定 `status=PENDING`、`priceDiff=0`
   - [x] 文档：`README.md`、`docs/API.md`、`docs/ARCHITECTURE.md`
+- [x] **我的换物列表 `GET /api/barters?type=from/to/all`**
+  - [x] 删除原「查全表」的假数据逻辑，改为按当前用户查询真实库表
+  - [x] `type=from` 查 `from_user_id`、`type=to` 查 `to_user_id`、`all` 两者 OR 合并（不传默认 `all`）
+  - [x] 按 `created_at` 倒序，同一时刻按 `id` 倒序，保证顺序稳定
+  - [x] 未登录 `401 请先登录`，非法 `type` 返回 `400 无效的 type 参数`
+  - [x] 文档：`README.md`、`docs/API.md`、`docs/ARCHITECTURE.md`
 
 ## 待办
 

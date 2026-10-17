@@ -219,7 +219,7 @@ curl http://localhost:8080/api/health
 | GET | `/api/auth/me` | 当前登录用户信息 | 是 |
 | GET | `/api/items` | 物品列表（支持 `?mode=BARTER/SALE/BOTH` 筛选） | 否 |
 | GET | `/api/items/{id}` | 物品详情 | 否 |
-| GET | `/api/barters` | 换物申请列表（MySQL） | 是 |
+| GET | `/api/barters` | 我的换物列表（支持 `?type=from/to/all`） | 是 |
 | POST | `/api/barters` | 发起换物（1:1，`toItemId` 换 `fromItemId`） | 是 |
 | GET | `/api/orders` | 二手订单列表（MySQL） | 是 |
 
@@ -248,8 +248,14 @@ curl -X POST http://localhost:8080/api/auth/login \
 # 带 token 访问需要登录的接口
 TOKEN="<上一步返回的 token>"
 curl http://localhost:8080/api/auth/me      -H "Authorization: Bearer $TOKEN"
-curl http://localhost:8080/api/barters      -H "Authorization: Bearer $TOKEN"
 curl http://localhost:8080/api/orders       -H "Authorization: Bearer $TOKEN"
+
+# 我的换物列表：不传 type 或 type=all = 我发起的 + 我收到的
+curl http://localhost:8080/api/barters -H "Authorization: Bearer $TOKEN"
+# 只看我发起的
+curl "http://localhost:8080/api/barters?type=from" -H "Authorization: Bearer $TOKEN"
+# 只看我收到的
+curl "http://localhost:8080/api/barters?type=to" -H "Authorization: Bearer $TOKEN"
 
 # 发起换物：zhangsan(id=1) 用自己 id=5 的 Switch，换 lisi(id=2) 的 id=2《三体全集》
 curl -X POST http://localhost:8080/api/barters \
@@ -404,7 +410,8 @@ docs/
 - [x] 数据库接入（MySQL + MyBatis-Plus）
 - [x] 用户系统（后端）：注册 / 登录 / JWT 鉴权 / 越权防护基础
 - [ ] 发布物品
-- [ ] 换物流程
+- [x] 换物流程
   - [x] 发起换物 `POST /api/barters`（登录 + 归属校验 + 重复申请拦截）
+  - [x] 我的换物列表 `GET /api/barters?type=from/to/all`（只查当前用户相关数据）
   - [ ] 接受 / 拒绝 / 完成换物
 - [ ] 二手下单

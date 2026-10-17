@@ -196,10 +196,77 @@ ItemVO 字段说明见项目根目录 `README.md` 的「数据模型」章节。
 
 ### GET /api/barters
 
-换物申请列表，**需要登录**，按 id 升序。
+我的换物列表，**需要登录**。只返回与当前登录用户相关的申请，身份取自 JWT，
+无法通过参数查询别人的换物申请。结果按 `createdAt` 倒序（同一时刻再按 `id` 倒序）。
+
+- 请求头：`Authorization: Bearer <token>`
+
+查询参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `type` | string | 否 | `from` = 我发起的；`to` = 我收到的；不传、空串或 `all` = 两者合并（行不会重复）；大小写不敏感，其他值返回 `400` |
 
 ```bash
+TOKEN="<login 返回的 token>"
+
+# 不传 type：我发起的 + 我收到的
 curl http://localhost:8080/api/barters -H "Authorization: Bearer $TOKEN"
+
+# 只看我发起的
+curl "http://localhost:8080/api/barters?type=from" -H "Authorization: Bearer $TOKEN"
+
+# 只看我收到的
+curl "http://localhost:8080/api/barters?type=to" -H "Authorization: Bearer $TOKEN"
+```
+
+成功响应（HTTP 200，以 `zhangsan`（id=1）为例，`type=all`）：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "id": 2,
+      "fromUserId": 1,
+      "toUserId": 2,
+      "fromItemId": 5,
+      "toItemId": 2,
+      "message": "用 Switch OLED 换你的三体全集，不用补差价，你看行吗？",
+      "priceDiff": 0.00,
+      "status": "ACCEPTED",
+      "createdAt": "2026-10-10 17:42:18"
+    },
+    {
+      "id": 1,
+      "fromUserId": 2,
+      "toUserId": 1,
+      "fromItemId": 6,
+      "toItemId": 1,
+      "message": "想用全新机械键盘换你的相机，我补 500 差价，可以详聊。",
+      "priceDiff": 500.00,
+      "status": "PENDING",
+      "createdAt": "2026-10-10 17:42:18"
+    }
+  ]
+}
+```
+
+没有匹配数据时 `data` 为空数组 `[]`，不会返回 `null`。
+
+错误码（HTTP 200 + 业务码，除非另有说明）：
+
+| code | message | 触发条件 |
+| --- | --- | --- |
+| `401` | `未登录或登录已过期` | 未带 token / token 失效（由 Spring Security 拦截，HTTP 也是 401） |
+| `401` | `请先登录` | 进入 Service 后当前用户为空（兜底保护） |
+| `400` | `无效的 type 参数` | `type` 不是 `from` / `to` / `all`（大小写不敏感） |
+
+失败响应示例：
+
+```json
+{ "code": 400, "message": "无效的 type 参数", "data": null }
 ```
 
 ### POST /api/barters

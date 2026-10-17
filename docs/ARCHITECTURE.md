@@ -40,7 +40,7 @@ src/main/java/com/myshop/
 ├── service/                          # 业务层：校验、鉴权、事务、entity ↔ VO 转换都在这里
 │   ├── AuthService.java              # 注册 / 登录 / 当前用户（写操作参考）
 │   ├── ItemService.java              # 物品查询，JSON 字段与 List 互转
-│   ├── BarterService.java            # 换物申请：listAll + create
+│   ├── BarterService.java            # 换物申请：list + create
 │   └── OrderService.java             # 二手订单查询
 └── util/
     └── JwtUtil.java                  # JWT 签发与校验（jjwt 0.12.x）
@@ -157,7 +157,17 @@ public class BarterController {
 
 | 方法 | 路径 | 说明 | 登录 | 实现位置 |
 | --- | --- | --- | --- | --- |
+| GET | `/api/barters` | 我的换物列表（`?type=from/to/all`） | 是 | `BarterController#list` → `BarterService#list` |
 | POST | `/api/barters` | 发起换物（1:1） | 是 | `BarterController#create` → `BarterService#create` |
+
+`BarterService#list` 的处理顺序：
+
+1. 从 `UserContext` 取当前用户，为空 → `401 请先登录`
+2. 归一化 `type`：空 → `all`，`from` / `to` / `all` 原样（转小写），其他 → `400 无效的 type 参数`
+3. 拼 `LambdaQueryWrapper`：`from` → `from_user_id = 当前用户`；`to` → `to_user_id = 当前用户`；
+   `all` → `(from_user_id = ? OR to_user_id = ?)`（同一行只返回一次，无需额外去重）
+4. `orderByDesc(created_at)` 再 `orderByDesc(id)`，最新申请在前且顺序稳定
+5. `selectList` → `toVO` 逐条转换，时间格式化成字符串返回
 
 请求体 `CreateBarterRequest`：`toItemId`（想换的，必填）、`fromItemId`（自己提供的，必填）、
 `message`（选填，≤500 字）。

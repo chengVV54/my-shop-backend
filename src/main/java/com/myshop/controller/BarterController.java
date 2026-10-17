@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -28,13 +29,15 @@ public class BarterController {
     private final BarterService barterService;
 
     /**
-     * 换物申请列表。
+     * 我的换物列表，只返回与当前登录用户相关的申请。
      *
-     * @return 换物申请列表
+     * @param type 过滤方向：{@code from} 我发起的、{@code to} 我收到的；
+     *             不传或 {@code all} 表示两者合并
+     * @return 换物申请列表，按创建时间倒序
      */
     @GetMapping
-    public Result<List<BarterRequestVO>> list() {
-        return Result.success(barterService.listAll());
+    public Result<List<BarterRequestVO>> list(@RequestParam(required = false) String type) {
+        return Result.success(barterService.list(type));
     }
 
     /**
